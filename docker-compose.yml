@@ -1,0 +1,16 @@
+services:
+  hw-monitor:
+    build: .
+    container_name: hw-monitor
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8181}:${PORT:-8181}"
+    volumes:
+      - ./data:/var/lib/hw_monitor
+      - /dev:/dev:ro
+      - /sys:/sys:ro
+    cap_add:
+      - SYS_ADMIN
+      - SYS_RAWIO

@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ app_title or 'HW Monitor' }}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f1115;
+            --panel: #1a1d24;
+            --panel-2: #22262f;
+            --border: #2a2f3a;
+            --text: #d8dde6;
+            --muted: #7d8593;
+            --accent: #4c9aff;
+            --ok: #27ae60;
+            --warn: #f2994a;
+            --err: #e74c3c;
+        }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            background: var(--bg); color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 14px 16px; margin: 0;
+            /* Desktop fit-to-viewport: the grid below consumes remaining
+               vertical space to avoid page scrolling. */
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        a { color: var(--accent); }
+
+        /* Main sections container: uses all space after header and splits
+           available height between panels (Voltages/CPU/GPU/Disks) using
+           minimum row sizes tuned for typical 1366x768 laptop screens. */
+        .dashboard {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 1fr;
+            grid-template-rows:
+                auto minmax(110px, 1fr)         /* Voltages */
+                auto minmax(95px, 0.7fr)        /* CPU */
+                auto minmax(140px, 1.5fr)       /* GPU */
+                auto minmax(95px, 1fr);         /* Storage */
+            row-gap: 2px;
+        }
+        /* If there are many disks, allow scroll inside disk section only,
+           keeping global fit-to-viewport behavior unchanged. */
+        #app-disks { overflow-y: auto; }
+
+        .header-box {
+            flex: 0 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 12px; border-bottom: 1px solid var(--border);
+            margin-bottom: 8px; padding-bottom: 8px; flex-wrap: wrap;
+        }
+        .title { display: flex; align-items: center; gap: 12px; }
+        .title h1 { font-size: 16px; margin: 0; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background 0.3s; }
+        .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+        .dot.err { background: var(--err); box-shadow: 0 0 6px var(--err); }
+        .updated { color: var(--muted); font-size: 12px; font-family: monospace; }
+
+        .controls { display: flex; gap: 4px; flex-wrap: wrap; }
+        .controls button {
+            background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+            padding: 6px 12px; cursor: pointer; border-radius: 6px;
+            font-size: 12px; font-weight: 600; letter-spacing: 0.5px;
+            transition: all 0.15s;
+        }
+        .controls button:hover { background: var(--panel-2); color: var(--text); }
+        .controls button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .logout-btn {
+            background: transparent; border: 1px solid var(--border); color: var(--muted);
+            padding: 6px 10px; cursor: pointer; border-radius: 6px; font-size: 12px;
+        }
+        .logout-btn:hover { color: var(--err); border-color: var(--err); }
+
+        .banner {
+            display: none; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px;
+            background: rgba(231, 76, 60, 0.12); border: 1px solid var(--err); color: #ffb3ab;
+            font-size: 13px;
+        }
+        .banner.visible { display: block; }
+
+        .section-title {
+            font-size: 11px; color: var(--muted); margin: 6px 0 4px;
+            text-transform: uppercase; letter-spacing: 1.2px; font-weight: 700;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 10px;
+            min-height: 0;
+            height: 100%;
+        }
+
+        .monitor-row {
+            background: var(--panel); border-radius: 8px;
+            height: 100%; min-height: 110px;
+            border-left: 4px solid var(--border); position: relative; overflow: hidden;
+            transition: border-color 0.3s;
+        }
+        .monitor-row.warn { border-left-color: var(--warn); }
+        .monitor-row.err {
+            border-left-color: var(--err);
+            animation: pulse 1.8s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.35); }
+            50%      { box-shadow: 0 0 0 4px rgba(231, 76, 60, 0);    }
+        }
+
+        .text-info {
+            position: absolute; top: 0; left: 0; right: 0;
+            display: flex; justify-content: space-between; align-items: flex-start;
+            padding: 10px 14px; z-index: 10; pointer-events: none;
+        }
+        .label {
+            font-size: 10.5px; font-weight: 700; color: var(--muted);
+            text-transform: uppercase; letter-spacing: 0.8px;
+        }
+        .value {
+            font-size: 18px; font-weight: 700; color: #fff;
+            font-family: 'SF Mono', Menlo, Consolas, monospace;
+        }
+        .value .sub {
+            font-size: 11px; font-weight: 500; color: var(--muted);
+            margin-top: 3px;
+        }
+        .stats {
+            position: absolute; left: 14px; bottom: 8px; z-index: 10;
+            font-size: 10px; color: var(--muted); font-family: monospace;
+            pointer-events: none; letter-spacing: 0.3px;
+        }
+        .chart-container {
+            position: absolute; top: 38px; left: 0; right: 0; bottom: 18px; z-index: 1;
+        }
+        .voltage-panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        .voltage-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 16px;
+            font-family: 'SF Mono', Menlo, Consolas, monospace;
+            font-size: 12px;
+            margin-bottom: 6px;
+            flex: 0 0 auto;
+        }
+        .voltage-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--muted);
+            min-width: 120px;
+        }
+        .voltage-item .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: none;
+        }
+        .voltage-item strong {
+            color: #fff;
+            font-weight: 700;
+        }
+        .voltage-chart-wrap {
+            flex: 1 1 auto;
+            min-height: 0;
+            position: relative;
+        }
+        .voltage-chart-wrap > canvas {
+            position: absolute;
+            inset: 0;
+        }
+
+        /* --- Login --- */
+        .login-wrap {
+            min-height: 80vh; display: flex; align-items: center; justify-content: center;
+        }
+        .login-card {
+            background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+            padding: 28px 32px; width: 320px; max-width: 92vw;
+        }
+        .login-card h2 { margin: 0 0 18px; font-size: 15px; color: var(--muted); letter-spacing: 1px; }
+        .login-card input[type=password] {
+            width: 100%; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 6px; color: var(--text); font-size: 14px;
+        }
+        .login-card input:focus { outline: none; border-color: var(--accent); }
+        .login-card button {
+            margin-top: 12px; width: 100%; padding: 10px;
+            background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+        }
+        .login-card .err { color: var(--err); font-size: 12px; margin-top: 8px; min-height: 16px; }
+
+        /* Mid-size desktop/tablet range: keep fit-to-viewport and reduce
+           minimum disk card width. */
+        @media (max-width: 1200px) {
+            .grid {
+                grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            }
+        }
+
+        /* --- Mobile layout ---
+           On narrow (<= 760px) or very short (<= 520px) screens, disable
+           fit-to-viewport and allow normal scrolling. Panels get fixed,
+           readable heights and the grid becomes one/two-column. */
+        @media (max-width: 760px), (max-height: 520px) {
+            html, body { height: auto; }
+            body {
+                display: block;
+                overflow: visible;
+                padding: 10px;
+            }
+            .header-box {
+                margin-bottom: 8px;
+                gap: 8px;
+            }
+            .title h1 { font-size: 14px; }
+            .updated { display: none; }
+            .controls { gap: 3px; flex: 1 1 auto; justify-content: flex-end; }
+            .controls button {
+                padding: 5px 8px; font-size: 11px;
+                letter-spacing: 0.3px;
+            }
+            .logout-btn { padding: 5px 8px; font-size: 11px; }
+
+            .dashboard {
+                display: block;
+                flex: none;
+                min-height: 0;
+            }
+            .section-title { margin: 10px 0 4px; }
+
+            .voltage-panel {
+                height: auto;
+                margin-bottom: 4px;
+                padding: 8px 10px;
+            }
+            .voltage-chart-wrap {
+                height: 170px;
+                flex: none;
+            }
+            .voltage-legend {
+                font-size: 11px;
+                gap: 4px 12px;
+                margin-bottom: 6px;
+            }
+            .voltage-item { min-width: 95px; gap: 5px; }
+
+            .grid {
+                height: auto;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+            }
+            .monitor-row {
+                height: 140px;
+                min-height: 0;
+            }
+            .text-info { padding: 8px 10px; }
+            .label { font-size: 9.5px; letter-spacing: 0.5px; }
+            .value { font-size: 16px; }
+            .value .sub { font-size: 10px; }
+            .stats { font-size: 9px; left: 10px; bottom: 6px; }
+            .chart-container { top: 34px; bottom: 14px; }
+        }
+
+        /* Very narrow screens (phone portrait): single column. */
+        @media (max-width: 460px) {
+            .grid { grid-template-columns: 1fr; }
+            .monitor-row { height: 130px; }
+            .voltage-chart-wrap { height: 150px; }
+            .voltage-item { min-width: 90px; }
+            .title h1 { font-size: 12px; letter-spacing: 0.3px; }
+            /* Short labels for period buttons on very small screens. */
+            .controls button .long  { display: none; }
+            .controls button .short { display: inline; }
+        }
+        .controls button .short { display: none; }
+    </style>
+</head>
+<body>
+
+{% if request.path == '/login' or (login_error is defined and login_error is not none) %}
+    <div class="login-wrap">
+        <form class="login-card" method="POST" action="/login">
+            <h2>{{ (app_title or 'HW Monitor')|upper }}</h2>
+            <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password">
+            <button type="submit">Sign in</button>
+            <div class="err">{{ login_error or '' }}</div>
+        </form>
+    </div>
+{% else %}
+
+    <div class="header-box">
+        <div class="title">
+            <span class="dot" id="status-dot"></span>
+            <h1>{{ (app_title or 'HW Monitor')|upper }}</h1>
+            <span class="updated" id="updated-at"></span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+            <div class="controls" id="time-btns">
+                <button data-mode="live" class="active"><span class="long">LIVE</span><span class="short">LIVE</span></button>
+                <button data-mode="10m"><span class="long">10 MIN</span><span class="short">10m</span></button>
+                <button data-mode="1h"><span class="long">1 HOUR</span><span class="short">1h</span></button>
+                <button data-mode="24h"><span class="long">24 HOURS</span><span class="short">24h</span></button>
+                <button data-mode="1w"><span class="long">1 WEEK</span><span class="short">1w</span></button>
+            </div>
+            <form method="POST" action="/logout" style="margin:0;">
+                <button type="submit" class="logout-btn">Log out</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="banner" id="err-banner"></div>
+
+    <div class="dashboard">
+        <div class="section-title">Voltages</div>
+        <div class="voltage-panel" id="voltage-panel">
+            <div class="voltage-legend" id="voltage-legend"></div>
+            <div class="voltage-chart-wrap"><canvas id="chart-voltages"></canvas></div>
+        </div>
+
+        <div class="section-title">CPU</div>
+        <div class="grid" id="app-cpu"></div>
+
+        <div class="section-title">GPU</div>
+        <div class="voltage-panel" id="gpu-panel">
+            <div class="voltage-legend" id="gpu-legend"></div>
+            <div class="voltage-chart-wrap"><canvas id="chart-gpu"></canvas></div>
+        </div>
+
+        <div class="section-title">Storage I/O</div>
+        <div class="grid" id="app-disks"></div>
+    </div>
+
+<script>
+(() => {
+    'use strict';
+
+    const LIVE_INTERVAL_MS = 1000;
+    const MAX_LIVE_POINTS = 300;
+
+    // Per-metric colors.
+    const COLORS = {
+        'Vcore': '#f24c3d', '+12V': '#f2994a', '+5V': '#27ae60', '+3.3V': '#2f80ed',
+        'AVCC':  '#9b59b6', 'VBAT':  '#7d8593',
+        'CPU Load': '#00d2ff', 'GPU Load': '#76b900',
+        'GPU Mem Used':  '#9b59b6', 'GPU Mem BW':    '#bb8fce',
+        'GPU Encoder':   '#1abc9c', 'GPU Decoder':   '#16a085',
+        'GPU Fan':       '#3498db', 'GPU Power':     '#e67e22',
+        'GPU Clock':     '#f39c12', 'GPU Mem Clock': '#d35400',
+        'CPU Temp': '#e74c3c', 'GPU Temp': '#2ecc71', 'NVMe Temp': '#f39c12',
+        'nvme0n1_temp': '#f39c12', 'sda_temp': '#3498db', 'sdb_temp': '#9b59b6',
+    };
+
+    // Thresholds (warn/err). null means no threshold for a metric.
+    const THRESHOLDS = {
+        'CPU Temp':  { warn: 75, err: 90 },
+        'GPU Temp':  { warn: 75, err: 88 },
+        'NVMe Temp': { warn: 65, err: 78 },
+        'nvme0n1_temp': { warn: 65, err: 78 },
+        'sda_temp':  { warn: 50, err: 60 },
+        'sdb_temp':  { warn: 50, err: 60 },
+        'CPU Load':  { warn: 85, err: 97 },
+        'GPU Load':  { warn: 85, err: 97 },
+        'GPU Mem Used': { warn: 85, err: 97 },
+        'GPU Fan':      { warn: 85, err: 97 },
+    };
+
+    // Voltage metrics are rendered in the "Voltages" section.
+    const VOLTAGE_KEYS = new Set(['Vcore', '+12V', '+5V', '+3.3V', 'AVCC', '3VSB', 'VBAT']);
+
+    // GPU metrics are grouped into a single panel like Voltages:
+    // legend with current values + multiline chart with two Y axes.
+    //   - left axis (y)  : %, °C, W
+    //   - right axis (y1): MHz for GPU/memory clocks
+    // GPU Mem Used = % of total VRAM (memory.used/memory.total).
+    // GPU Mem BW   = memory bus utilization % (utilization.memory).
+    const GPU_KEYS = [
+        'GPU Load', 'GPU Mem Used', 'GPU Mem BW', 'GPU Temp',
+        'GPU Encoder', 'GPU Decoder', 'GPU Fan', 'GPU Power',
+        'GPU Clock', 'GPU Mem Clock',
+    ];
+    // Units used for formatting and axis grouping.
+    const PCT_KEYS = new Set([
+        'CPU Load', 'GPU Load', 'GPU Mem Used', 'GPU Mem BW',
+        'GPU Encoder', 'GPU Decoder', 'GPU Fan',
+    ]);
+    const MHZ_KEYS = new Set(['GPU Clock', 'GPU Mem Clock']);
+    const WATT_KEYS = new Set(['GPU Power']);
+    // Metrics rendered on the right axis (y1): different magnitude scale.
+    const GPU_RIGHT_AXIS = new Set(['GPU Clock', 'GPU Mem Clock']);
+
+    // Temperatures do not get dedicated cards; they are shown as sub-text in
+    // related cards (CPU Load, GPU Load, <disk>).
+    const isTempMetric = (k) => k.includes('Temp') || k.endsWith('_temp');
+    const isDiskMetric = (k) => /_(read|write|temp)$/.test(k);
+
+    const formatValue = (label, value) => {
+        if (value == null) return '--';
+        if (PCT_KEYS.has(label))   return value.toFixed(1) + ' %';
+        if (MHZ_KEYS.has(label))   return value.toFixed(0) + ' MHz';
+        if (WATT_KEYS.has(label))  return value.toFixed(1) + ' W';
+        if (isTempMetric(label))   return value.toFixed(1) + ' °C';
+        return value.toFixed(3) + ' V';
+    };
+
+    const formatStat = (label, value) => {
+        if (MHZ_KEYS.has(label)) return value.toFixed(0);
+        return value.toFixed(1);
+    };
+
+    // --- State ---
+    const state = {
+        mode: 'live',
+        pollTimer: null,
+        inflight: null,
+        charts: {},          // label -> Chart
+        voltageChart: null,  // combined voltage chart
+        gpuChart: null,      // combined GPU chart
+        disks: new Set(),
+        online: null,        // true/false/null(unknown)
+    };
+
+    // --- Helpers ---
+    const $ = (id) => document.getElementById(id);
+    const slug = (s) => s.replace(/[^a-zA-Z0-9]+/g, '-');
+
+    const lastValue = (arr) => {
+        if (!arr) return null;
+        for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return arr[i];
+        return null;
+    };
+    const stats = (arr) => {
+        let mn = Infinity, mx = -Infinity, sum = 0, n = 0;
+        for (const v of arr || []) {
+            if (v == null) continue;
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+            sum += v; n++;
+        }
+        return n ? { min: mn, max: mx, avg: sum / n } : null;
+    };
+
+    const setStatus = (ok) => {
+        if (state.online === ok) return;
+        state.online = ok;
+        const dot = $('status-dot');
+        dot.classList.toggle('ok',  ok === true);
+        dot.classList.toggle('err', ok === false);
+        const banner = $('err-banner');
+        if (ok) {
+            banner.classList.remove('visible');
+        } else {
+            banner.textContent = 'No connection to server. Retrying...';
+            banner.classList.add('visible');
+        }
+    };
+
+    const applyThresholds = (row, label, value) => {
+        if (value == null) return;
+        const t = THRESHOLDS[label];
+        row.classList.remove('warn', 'err');
+        if (!t) return;
+        if (t.err  != null && value >= t.err)  row.classList.add('err');
+        else if (t.warn != null && value >= t.warn) row.classList.add('warn');
+    };
+
+    // --- Chart factories ---
+    const chartOptions = (isDual) => ({
+        responsive: true, maintainAspectRatio: false, animation: false,
+        parsing: false, normalized: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(20,22,28,0.92)',
+                borderColor: '#2a2f3a', borderWidth: 1,
+                displayColors: isDual,
+                callbacks: {
+                    title: (items) => {
+                        const raw = items[0]?.raw;
+                        if (!raw) return '';
+                        const d = new Date(raw.x * 1000);
+                        return (state.mode === 'live' || state.mode === '10m')
+                            ? d.toLocaleTimeString()
+                            : d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    },
+                    label: (c) => {
+                        const v = c.raw?.y;
+                        if (v == null) return null;
+                        const name = isDual ? ` ${c.dataset.label}` : '';
+                        return `${name}: ${v.toFixed(3)}`;
+                    },
+                },
+            },
+        },
+        // Without explicit min/max, Chart.js auto-scales to current data range.
+        // In live mode the window is pinned in applyChartWindow().
+        scales: {
+            x: { type: 'linear', display: false, bounds: 'data' },
+            y: { display: false },
+        },
+        elements: { point: { radius: 0, hoverRadius: 4 } },
+    });
+
+    // Unified live time window: min = now - MAX_LIVE_POINTS, max = now.
+    // Prevents linear axis re-scaling as buffer fills.
+    const applyChartWindow = (chart) => {
+        const scale = chart.options.scales.x;
+        if (state.mode === 'live') {
+            const now = Math.floor(Date.now() / 1000);
+            scale.min = now - MAX_LIVE_POINTS;
+            scale.max = now;
+        } else {
+            scale.min = undefined;
+            scale.max = undefined;
+        }
+    };
+
+    const mkGradient = (ctx, color) => {
+        const g = ctx.createLinearGradient(0, 0, 0, 110);
+        g.addColorStop(0, color + '55');
+        g.addColorStop(1, color + '00');
+        return g;
+    };
+
+    const initVoltageChart = () => {
+        if (state.voltageChart) return;
+        const canvas = $('chart-voltages');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const opts = chartOptions(true);
+        opts.scales.y = {
+            display: true,
+            grid: { color: 'rgba(125,133,147,0.15)' },
+            ticks: { color: '#7d8593', maxTicksLimit: 5 },
+        };
+        state.voltageChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets: [] },
+            options: opts,
+        });
+    };
+
+    const initGpuChart = () => {
+        if (state.gpuChart) return;
+        const canvas = $('chart-gpu');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const opts = chartOptions(true);
+        // Left axis: % / °C / W. They are visually close enough to share one
+        // axis; labels/tooltips still show exact units. Max is not hard-capped.
+        opts.scales.y = {
+            type: 'linear',
+            position: 'left',
+            display: true,
+            beginAtZero: true,
+            suggestedMax: 100,
+            grid: { color: 'rgba(125,133,147,0.15)' },
+            ticks: { color: '#7d8593', maxTicksLimit: 5 },
+        };
+        // Right axis for MHz clocks.
+        opts.scales.y1 = {
+            type: 'linear',
+            position: 'right',
+            display: true,
+            beginAtZero: true,
+            grid: { drawOnChartArea: false },
+            ticks: {
+                color: '#7d8593',
+                maxTicksLimit: 5,
+                callback: (v) => `${v} MHz`,
+            },
+        };
+        // Show tooltip values with proper units.
+        opts.plugins.tooltip.callbacks.label = (c) => {
+            const v = c.raw?.y;
+            if (v == null) return null;
+            return ` ${c.dataset.label}: ${formatValue(c.dataset.label, v)}`;
+        };
+        state.gpuChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets: [] },
+            options: opts,
+        });
+    };
+
+    const initSingleRow = (label, containerId) => {
+        const container = $(containerId);
+        const row = document.createElement('div');
+        row.className = 'monitor-row';
+        row.id = `row-${slug(label)}`;
+        const color = COLORS[label] || '#9b59b6';
+        row.style.borderLeftColor = color;
+
+        const extra = label === 'CPU Load'
+            ? `<div class="sub" id="sub-${slug(label)}" style="color:${COLORS['CPU Temp']};"></div>`
+            : label === 'GPU Load'
+            ? `<div class="sub" id="sub-${slug(label)}" style="color:${COLORS['GPU Temp']};"></div>`
+            : '';
+
+        row.innerHTML = `
+            <div class="text-info">
+                <div class="label">${label.replace(/_/g, ' ').toUpperCase()}</div>
+                <div class="value" style="text-align:right;">
+                    <div id="val-${slug(label)}">--</div>
+                    ${extra}
+                </div>
+            </div>
+            <div class="stats" id="stats-${slug(label)}"></div>
+            <div class="chart-container"><canvas id="chart-${slug(label)}"></canvas></div>`;
+        container.appendChild(row);
+
+        const ctx = row.querySelector('canvas').getContext('2d');
+        state.charts[label] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    data: [], borderColor: color, backgroundColor: mkGradient(ctx, color),
+                    borderWidth: 2, fill: true, tension: 0.3, spanGaps: false,
+                }],
+            },
+            options: chartOptions(false),
+        });
+    };
+
+    const initDiskRow = (disk) => {
+        const container = $('app-disks');
+        const row = document.createElement('div');
+        row.className = 'monitor-row';
+        row.id = `row-${slug(disk)}`;
+        row.style.borderLeftColor = '#888';
+
+        row.innerHTML = `
+            <div class="text-info">
+                <div class="label">${disk.toUpperCase()}</div>
+                <div class="value" style="text-align:right; font-size:13px; line-height:1.3;">
+                    <div style="white-space:nowrap;">
+                        <span style="color:#27ae60;" id="val-${disk}-read">R: --</span>
+                        <span style="color:#555; margin: 0 6px;">·</span>
+                        <span style="color:#e74c3c;" id="val-${disk}-write">W: --</span>
+                    </div>
+                    <div class="sub" id="val-${disk}-temp"></div>
+                </div>
+            </div>
+            <div class="chart-container"><canvas id="chart-${disk}"></canvas></div>`;
+        container.appendChild(row);
+
+        const ctx = row.querySelector('canvas').getContext('2d');
+        state.charts[disk] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [
+                    { label: 'Read',  data: [], borderColor: '#27ae60',
+                      backgroundColor: mkGradient(ctx, '#27ae60'),
+                      borderWidth: 2, fill: true, tension: 0.3, spanGaps: false },
+                    { label: 'Write', data: [], borderColor: '#e74c3c',
+                      backgroundColor: mkGradient(ctx, '#e74c3c'),
+                      borderWidth: 2, fill: true, tension: 0.3, spanGaps: false },
+                ],
+            },
+            options: chartOptions(true),
+        });
+    };
+
+    // --- Data plumbing ---
+    const toPoints = (times, values) => {
+        const n = Math.min(times.length, values.length);
+        const out = new Array(n);
+        for (let i = 0; i < n; i++) {
+            const v = values[i];
+            out[i] = { x: times[i], y: v == null ? null : v };
+        }
+        return out;
+    };
+
+    const renderMetric = (label, containerId, times, hist) => {
+        if (!state.charts[label]) initSingleRow(label, containerId);
+        const last = lastValue(hist);
+        const valEl = $(`val-${slug(label)}`);
+        if (valEl) valEl.innerText = formatValue(label, last);
+
+        const s = stats(hist);
+        const stEl = $(`stats-${slug(label)}`);
+        if (stEl && s) {
+            stEl.innerText = `min ${formatStat(label, s.min)} · avg ${formatStat(label, s.avg)} · max ${formatStat(label, s.max)}`;
+        }
+
+        applyThresholds($(`row-${slug(label)}`), label, last);
+
+        const chart = state.charts[label];
+        chart.data.datasets[0].data = toPoints(times, hist);
+        applyChartWindow(chart);
+        chart.update('none');
+    };
+
+    const renderVoltages = (times, metrics) => {
+        initVoltageChart();
+        if (!state.voltageChart) return;
+
+        const keys = [...VOLTAGE_KEYS].filter((k) => Array.isArray(metrics[k]));
+        const legend = $('voltage-legend');
+        if (legend) {
+            legend.innerHTML = '';
+            for (const key of keys) {
+                const item = document.createElement('div');
+                item.className = 'voltage-item';
+                const color = COLORS[key] || '#9b59b6';
+                const last = lastValue(metrics[key]);
+                item.innerHTML = `<span class="dot" style="background:${color}"></span><span>${key}</span><strong>${formatValue(key, last)}</strong>`;
+                legend.appendChild(item);
+            }
+        }
+
+        state.voltageChart.data.datasets = keys.map((key) => ({
+            label: key,
+            data: toPoints(times, metrics[key]),
+            borderColor: COLORS[key] || '#9b59b6',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.25,
+            fill: false,
+            spanGaps: false,
+        }));
+        applyChartWindow(state.voltageChart);
+        state.voltageChart.update('none');
+    };
+
+    const renderGpu = (times, metrics) => {
+        initGpuChart();
+        if (!state.gpuChart) return;
+
+        const keys = GPU_KEYS.filter((k) => Array.isArray(metrics[k]));
+        const legend = $('gpu-legend');
+        if (legend) {
+            legend.innerHTML = '';
+            for (const key of keys) {
+                const item = document.createElement('div');
+                item.className = 'voltage-item';
+                const color = COLORS[key] || '#9b59b6';
+                const last = lastValue(metrics[key]);
+                // Highlight legend values by configured thresholds.
+                let valueColor = '#fff';
+                const t = THRESHOLDS[key];
+                if (t && last != null) {
+                    if (t.err  != null && last >= t.err)  valueColor = 'var(--err)';
+                    else if (t.warn != null && last >= t.warn) valueColor = 'var(--warn)';
+                }
+                item.innerHTML =
+                    `<span class="dot" style="background:${color}"></span>` +
+                    `<span>${key}</span>` +
+                    `<strong style="color:${valueColor}">${formatValue(key, last)}</strong>`;
+                legend.appendChild(item);
+            }
+        }
+
+        state.gpuChart.data.datasets = keys.map((key) => ({
+            label: key,
+            data: toPoints(times, metrics[key]),
+            borderColor: COLORS[key] || '#9b59b6',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.25,
+            fill: false,
+            spanGaps: false,
+            yAxisID: GPU_RIGHT_AXIS.has(key) ? 'y1' : 'y',
+        }));
+        applyChartWindow(state.gpuChart);
+        state.gpuChart.update('none');
+    };
+
+    const renderDisk = (disk, times, metrics) => {
+        if (!state.charts[disk]) {
+            initDiskRow(disk);
+            state.disks.add(disk);
+        }
+        const rHist = metrics[`${disk}_read`]  || [];
+        const wHist = metrics[`${disk}_write`] || [];
+        const tHist = metrics[`${disk}_temp`]  || [];
+
+        const rLast = lastValue(rHist) ?? 0;
+        const wLast = lastValue(wHist) ?? 0;
+        const tLast = lastValue(tHist);
+
+        $(`val-${disk}-read`).innerText  = `R ${rLast.toFixed(2)}`;
+        $(`val-${disk}-write`).innerText = `W ${wLast.toFixed(2)} MB/s`;
+        const tEl = $(`val-${disk}-temp`);
+        if (tHist.length) {
+            tEl.innerText = tLast == null ? 'Sleep' : `T: ${tLast.toFixed(1)}°C`;
+            tEl.style.color = COLORS[`${disk}_temp`] || 'var(--muted)';
+        } else {
+            tEl.innerText = '';
+        }
+        applyThresholds($(`row-${slug(disk)}`), `${disk}_temp`, tLast);
+
+        const chart = state.charts[disk];
+        chart.data.datasets[0].data = toPoints(times, rHist);
+        chart.data.datasets[1].data = toPoints(times, wHist);
+        applyChartWindow(chart);
+        chart.update('none');
+    };
+
+    // --- Fetch loop ---
+    const fetchData = async () => {
+        const url = state.mode === 'live'
+            ? '/api/data'
+            : `/api/history?period=${state.mode}`;
+        const ctl = new AbortController();
+        state.inflight = ctl;
+        try {
+            const res = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+            if (res.status === 401) {
+                window.location.href = '/login';
+                return;
+            }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            apply(data);
+            setStatus(true);
+            const ts = data.times?.length ? data.times[data.times.length - 1] * 1000 : Date.now();
+            $('updated-at').innerText = 'updated ' + new Date(ts).toLocaleTimeString();
+        } catch (e) {
+            if (e.name !== 'AbortError') {
+                console.error('fetch failed:', e);
+                setStatus(false);
+            }
+        } finally {
+            state.inflight = null;
+        }
+    };
+
+    const apply = (data) => {
+        if (!data || !data.metrics) return;
+        const times = data.times || [];
+        const metrics = data.metrics;
+
+        // 1) CPU card, CPU Temp shown as sub-text.
+        if (metrics['CPU Load']) {
+            renderMetric('CPU Load', 'app-cpu', times, metrics['CPU Load']);
+        }
+        const cpuTempLast = lastValue(metrics['CPU Temp']);
+        const cpuSub = $('sub-CPU-Load');
+        if (cpuSub) cpuSub.innerText = cpuTempLast != null ? `T: ${cpuTempLast.toFixed(1)}°C` : '';
+        if (cpuTempLast != null) applyThresholds($('row-CPU-Load'), 'CPU Temp', cpuTempLast);
+
+        // 2) Voltages panel with a combined wide chart.
+        renderVoltages(times, metrics);
+
+        // 3) GPU panel with all metrics in one multiline chart.
+        renderGpu(times, metrics);
+
+        // 4) Disks from key prefixes: <disk>_read/<disk>_write/<disk>_temp.
+        const disks = new Set();
+        for (const k of Object.keys(metrics)) {
+            const m = k.match(/^([^_]+)_(read|write|temp)$/);
+            if (m) disks.add(m[1]);
+        }
+        for (const disk of disks) renderDisk(disk, times, metrics);
+    };
+
+    const setMode = (mode, btn) => {
+        state.mode = mode;
+        document.querySelectorAll('#time-btns button').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+        if (state.inflight) state.inflight.abort();
+        clearInterval(state.pollTimer);
+        fetchData();
+        if (mode === 'live') state.pollTimer = setInterval(fetchData, LIVE_INTERVAL_MS);
+    };
+
+    // --- Boot ---
+    document.querySelectorAll('#time-btns button').forEach((b) => {
+        b.addEventListener('click', (ev) => setMode(b.dataset.mode, ev.currentTarget));
+    });
+    document.addEventListener('visibilitychange', () => {
+        // Pause polling in background tabs to reduce traffic/CPU usage.
+        if (document.hidden) {
+            clearInterval(state.pollTimer);
+        } else if (state.mode === 'live') {
+            fetchData();
+            state.pollTimer = setInterval(fetchData, LIVE_INTERVAL_MS);
+        }
+    });
+
+    setMode('live', document.querySelector('#time-btns button[data-mode=live]'));
+})();
+</script>
+{% endif %}
+</body>
+</html>
