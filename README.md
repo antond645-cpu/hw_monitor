@@ -137,6 +137,28 @@ Then run:
 docker compose up -d
 ```
 
+## Unraid Apps (Community Applications)
+
+This repository includes Unraid CA files:
+- `unraid/hw-monitor.xml`
+- `ca_profile.xml`
+
+### Option A: Show in your own Apps tab now (custom source)
+
+1. In Unraid, open `Apps` -> `Settings`.
+2. Add a custom source/repository using this XML URL:
+
+`https://raw.githubusercontent.com/antond645-cpu/hw_monitor/main/unraid/hw-monitor.xml`
+
+3. Refresh Apps and search for `HW Monitor`.
+
+### Option B: Publish into the public CA index
+
+Submit this repository in the CA submit portal:
+- [https://ca.unraid.net/submit](https://ca.unraid.net/submit)
+
+After review/approval by CA maintainers, the app becomes searchable for all users in Community Applications.
+
 ## Notes
 
 - On macOS/Windows, Linux-specific sensors may be unavailable.

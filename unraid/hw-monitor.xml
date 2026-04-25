@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>HW Monitor</Name>
+  <Repository>ghcr.io/antond645-cpu/hw-monitor:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/antond645-cpu/hw_monitor/issues</Support>
+  <Project>https://github.com/antond645-cpu/hw_monitor</Project>
+  <Overview>
+    Lightweight hardware monitoring dashboard for Linux and Unraid.
+    Collects CPU/GPU/disk metrics, SMART temperatures, and historical charts.
+
+    Notes:
+    - Requires /dev and /sys mounted read-only for hardware probing.
+    - Uses SYS_ADMIN and SYS_RAWIO capabilities for smartctl access.
+    - NVIDIA metrics require nvidia-smi inside the container runtime.
+  </Overview>
+  <Category>Tools:Utilities:Monitoring:</Category>
+  <WebUI>http://[IP]:[PORT:8181]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/antond645-cpu/hw_monitor/main/unraid/hw-monitor.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/antond645-cpu/hw_monitor/main/assets/hw_monitor.png</Icon>
+  <ExtraParams>--cap-add=SYS_ADMIN --cap-add=SYS_RAWIO</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>0</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Hardware monitor with live + historical metrics and SMART temperature support.</Description>
+
+  <Config Name="WebUI Port" Target="8181" Default="8181" Mode="tcp" Description="Container Port: 8181" Type="Port" Display="always" Required="true" Mask="false">8181</Config>
+  <Config Name="Appdata" Target="/var/lib/hw_monitor" Default="/mnt/user/appdata/hw_monitor/data" Mode="rw" Description="Persistent history database" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hw_monitor/data</Config>
+  <Config Name="Host /dev (read-only)" Target="/dev" Default="/dev" Mode="ro" Description="Device nodes for SMART/sensors access" Type="Path" Display="always" Required="true" Mask="false">/dev</Config>
+  <Config Name="Host /sys (read-only)" Target="/sys" Default="/sys" Mode="ro" Description="Kernel hardware information" Type="Path" Display="always" Required="true" Mask="false">/sys</Config>
+  <Config Name="Login Password" Target="AUTH_PASS" Default="change-me" Description="Web UI login password" Type="Variable" Display="always" Required="true" Mask="true">change-me</Config>
+  <Config Name="Flask Secret Key" Target="SECRET_KEY" Default="replace-with-long-random-string" Description="Session signing key (set to a long random value)" Type="Variable" Display="always" Required="true" Mask="true">replace-with-long-random-string</Config>
+  <Config Name="App Title" Target="APP_TITLE" Default="HW Monitor" Description="Title displayed in the web interface" Type="Variable" Display="advanced" Required="false" Mask="false">HW Monitor</Config>
+  <Config Name="Disk Discovery" Target="SMART_DEVICES" Default="auto" Description="auto or comma-separated devices, e.g. /dev/sda,/dev/nvme0n1" Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
+  <Config Name="NVIDIA Mode" Target="ENABLE_NVIDIA" Default="auto" Description="auto / true / false" Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
+  <Config Name="Log Level" Target="LOG_LEVEL" Default="INFO" Description="DEBUG, INFO, WARNING, ERROR" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+</Container>

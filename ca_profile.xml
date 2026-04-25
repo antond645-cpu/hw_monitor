@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Maintainer>
+  <Icon>https://raw.githubusercontent.com/antond645-cpu/hw_monitor/main/assets/hw_monitor.png</Icon>
+  <Profile>
+    HW Monitor templates and container packaging for Unraid users.
+    Focused on sane defaults, simple deployment, and hardware visibility.
+  </Profile>
+  <WebPage>https://github.com/antond645-cpu/hw_monitor</WebPage>
+</Maintainer>
