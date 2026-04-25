@@ -17,6 +17,7 @@
     - Requires /dev and /sys mounted read-only for hardware probing.
     - Uses SYS_ADMIN and SYS_RAWIO capabilities for smartctl access.
     - NVIDIA metrics require nvidia-smi inside the container runtime.
+    - AMD/Intel metrics are read from sysfs and may vary by kernel/driver.
   </Overview>
   <Category>Tools:Utilities:Monitoring:</Category>
   <WebUI>http://[IP]:[PORT:8181]/</WebUI>
@@ -39,5 +40,7 @@
   <Config Name="App Title" Target="APP_TITLE" Default="HW Monitor" Description="Title displayed in the web interface" Type="Variable" Display="advanced" Required="false" Mask="false">HW Monitor</Config>
   <Config Name="Disk Discovery" Target="SMART_DEVICES" Default="auto" Description="auto or comma-separated devices, e.g. /dev/sda,/dev/nvme0n1" Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
   <Config Name="NVIDIA Mode" Target="ENABLE_NVIDIA" Default="auto" Description="auto / true / false" Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
+  <Config Name="AMD Mode" Target="ENABLE_AMD" Default="auto" Description="auto / true / false" Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
+  <Config Name="Intel Mode" Target="ENABLE_INTEL" Default="auto" Description="auto / true / false" Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
   <Config Name="Log Level" Target="LOG_LEVEL" Default="INFO" Description="DEBUG, INFO, WARNING, ERROR" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
 </Container>

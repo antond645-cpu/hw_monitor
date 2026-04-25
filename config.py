@@ -29,6 +29,21 @@ def _env_bool_auto(name: str, auto_default: bool) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _has_drm_vendor(vendor_hex: str) -> bool:
+    """Return True when /sys/class/drm contains a GPU with vendor id."""
+    base = Path("/sys/class/drm")
+    if not base.exists():
+        return False
+    needle = vendor_hex.strip().lower()
+    for path in base.glob("card*/device/vendor"):
+        try:
+            if path.read_text(encoding="utf-8").strip().lower() == needle:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 # --- Authentication ---
 PASSWORD: str = os.getenv("AUTH_PASS", "admin")
 # Session cookie signing key; random when not explicitly set.
@@ -60,6 +75,10 @@ SMART_DEVICES: list[str] = [
 ]
 # Whether to collect NVIDIA GPU metrics via nvidia-smi.
 ENABLE_NVIDIA: bool = _env_bool_auto("ENABLE_NVIDIA", shutil.which("nvidia-smi") is not None)
+# Whether to collect AMD GPU metrics via sysfs.
+ENABLE_AMD: bool = _env_bool_auto("ENABLE_AMD", _has_drm_vendor("0x1002"))
+# Whether to collect Intel GPU metrics via sysfs.
+ENABLE_INTEL: bool = _env_bool_auto("ENABLE_INTEL", _has_drm_vendor("0x8086"))
 
 # --- History storage ---
 DB_PATH: Path = Path(os.getenv("DB_PATH", "/var/lib/hw_monitor/history.db"))

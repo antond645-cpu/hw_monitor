@@ -13,6 +13,8 @@ Lightweight hardware monitoring for Linux, built with Python + Flask:
 
 - **Disks:** default `SMART_DEVICES=auto` scans physical block devices (`/dev/sdX`, `/dev/nvmeXnY`, etc.).
 - **NVIDIA GPU:** default `ENABLE_NVIDIA=auto` enables GPU metrics only when `nvidia-smi` is available.
+- **AMD GPU:** default `ENABLE_AMD=auto` enables metrics via `/sys/class/drm` + hwmon.
+- **Intel GPU:** default `ENABLE_INTEL=auto` enables metrics via `/sys/class/drm` + hwmon.
 - **CPU and voltages:** collected through `lm-sensors` (`sensors` command).
 
 If you want explicit disk targets, set for example:
@@ -73,6 +75,8 @@ Key settings:
 - `PORT` - service port
 - `SMART_DEVICES` - comma-separated list or `auto`
 - `ENABLE_NVIDIA` - `true` / `false` / `auto`
+- `ENABLE_AMD` - `true` / `false` / `auto`
+- `ENABLE_INTEL` - `true` / `false` / `auto`
 - `DB_PATH` - SQLite history path
 - `HISTORY_RETENTION_DAYS` - history retention window
 - `VOLTAGE_MAPPING` - manual voltage mapping (optional)
@@ -163,4 +167,4 @@ After review/approval by CA maintainers, the app becomes searchable for all user
 
 - On macOS/Windows, Linux-specific sensors may be unavailable.
 - SMART in containers requires `/dev` access and capabilities (`SYS_ADMIN`, `SYS_RAWIO`).
-- AMD/Intel GPU metrics are not yet implemented (NVIDIA is supported via `nvidia-smi`).
+- AMD/Intel GPU metrics are sysfs-based and available fields depend on kernel + driver support.

@@ -305,6 +305,7 @@ _NVIDIA_FIELDS: tuple[tuple[str, str, int], ...] = (
     ("memory.used",                "_mem_used",      0),
     ("memory.total",               "_mem_total",     0),
 )
+_PP_DPM_CLK_RE = re.compile(r":\s*(\d+(?:\.\d+)?)\s*MHz\b.*\*")
 
 
 def _parse_nvidia_value(raw: str) -> float | None:
@@ -349,6 +350,151 @@ def read_nvidia() -> dict[str, float]:
     mem_total = raw.get("_mem_total")
     if mem_used is not None and mem_total and mem_total > 0:
         data["GPU Mem Used"] = round(100.0 * mem_used / mem_total, 1)
+
+    return data
+
+
+# ---------- AMD / Intel GPU (sysfs) ----------------------------------------
+
+def _discover_drm_cards() -> list[Path]:
+    base = Path("/sys/class/drm")
+    if not base.exists():
+        return []
+    return sorted((p for p in base.glob("card[0-9]*") if p.is_dir()), key=lambda p: p.name)
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+
+
+def _read_float(path: Path, scale: float = 1.0) -> float | None:
+    raw = _read_text(path)
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw) * scale
+    except ValueError:
+        return None
+
+
+def _read_hwmon_float(device: Path, leaf: str, scale: float = 1.0) -> float | None:
+    hwmon_root = device / "hwmon"
+    if not hwmon_root.exists():
+        return None
+    for node in sorted(hwmon_root.glob("hwmon*")):
+        value = _read_float(node / leaf, scale=scale)
+        if value is not None:
+            return value
+    return None
+
+
+def _card_vendor(card: Path) -> str | None:
+    return _read_text(card / "device" / "vendor")
+
+
+def _pick_card(vendor_hex: str) -> Path | None:
+    target = vendor_hex.lower()
+    for card in _discover_drm_cards():
+        vendor = _card_vendor(card)
+        if vendor and vendor.lower() == target:
+            return card
+    return None
+
+
+def _parse_pp_dpm_clock(path: Path) -> float | None:
+    raw = _read_text(path)
+    if not raw:
+        return None
+    for line in raw.splitlines():
+        m = _PP_DPM_CLK_RE.search(line)
+        if m:
+            try:
+                return round(float(m.group(1)))
+            except ValueError:
+                return None
+    return None
+
+
+def read_amd_gpu() -> dict[str, float]:
+    if not config.ENABLE_AMD:
+        return {}
+    card = _pick_card("0x1002")
+    if card is None:
+        return {}
+    device = card / "device"
+    data: dict[str, float] = {}
+
+    load = _read_float(device / "gpu_busy_percent")
+    if load is not None:
+        data["GPU Load"] = round(load, 1)
+
+    temp = _read_hwmon_float(device, "temp1_input", scale=0.001)
+    if temp is not None:
+        data["GPU Temp"] = round(temp, 1)
+
+    power = _read_hwmon_float(device, "power1_average", scale=1e-6)
+    if power is not None:
+        data["GPU Power"] = round(power, 1)
+
+    pwm = _read_hwmon_float(device, "pwm1")
+    if pwm is not None:
+        pwm_max = _read_hwmon_float(device, "pwm1_max") or 255.0
+        if pwm_max > 0:
+            data["GPU Fan"] = round(max(0.0, min(100.0, 100.0 * pwm / pwm_max)), 1)
+
+    gfx_clk = _parse_pp_dpm_clock(device / "pp_dpm_sclk")
+    if gfx_clk is not None:
+        data["GPU Clock"] = gfx_clk
+
+    mem_clk = _parse_pp_dpm_clock(device / "pp_dpm_mclk")
+    if mem_clk is not None:
+        data["GPU Mem Clock"] = mem_clk
+
+    vram_used = _read_float(device / "mem_info_vram_used")
+    vram_total = _read_float(device / "mem_info_vram_total")
+    if vram_used is not None and vram_total and vram_total > 0:
+        data["GPU Mem Used"] = round(100.0 * vram_used / vram_total, 1)
+
+    return data
+
+
+def read_intel_gpu() -> dict[str, float]:
+    if not config.ENABLE_INTEL:
+        return {}
+    card = _pick_card("0x8086")
+    if card is None:
+        return {}
+    device = card / "device"
+    data: dict[str, float] = {}
+
+    for leaf in ("gt_busy_percent", "gpu_busy_percent", "busy_percent"):
+        load = _read_float(device / leaf)
+        if load is not None:
+            data["GPU Load"] = round(load, 1)
+            break
+
+    for leaf in ("temp1_input", "temp2_input"):
+        temp = _read_hwmon_float(device, leaf, scale=0.001)
+        if temp is not None:
+            data["GPU Temp"] = round(temp, 1)
+            break
+
+    power = _read_hwmon_float(device, "power1_average", scale=1e-6)
+    if power is not None:
+        data["GPU Power"] = round(power, 1)
+
+    for leaf in ("gt_cur_freq_mhz", "gt_act_freq_mhz", "rps_cur_freq_mhz"):
+        clk = _read_float(device / leaf)
+        if clk is not None:
+            data["GPU Clock"] = round(clk)
+            break
+
+    mem_bw = _read_float(device / "mem_busy_percent")
+    if mem_bw is not None:
+        data["GPU Mem BW"] = round(mem_bw, 1)
 
     return data
 
@@ -543,7 +689,12 @@ class Collector:
     def _collect_once(self, now: float) -> dict[str, float]:
         snapshot: dict[str, float] = {}
         snapshot.update(read_sensors())
-        snapshot.update(read_nvidia())
+        gpu = read_nvidia()
+        if not gpu:
+            gpu = read_amd_gpu()
+        if not gpu:
+            gpu = read_intel_gpu()
+        snapshot.update(gpu)
         snapshot.update(_collect_psutil(self._io_state, self._smart_devices))
 
         # SMART with caching to avoid polling disks every second.
