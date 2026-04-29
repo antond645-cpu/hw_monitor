@@ -10,14 +10,11 @@
   <Support>https://github.com/antond645-cpu/hw_monitor/issues</Support>
   <Project>https://github.com/antond645-cpu/hw_monitor</Project>
   <Overview>
-    Lightweight hardware monitoring dashboard for Linux and Unraid.
-    Collects CPU/GPU/disk metrics, SMART temperatures, and historical charts.
+    Web dashboard for CPU, GPUs, disks, motherboard voltages, and SMART temps on Linux/Unraid—live charts plus SQLite-backed history.
 
-    Notes:
-    - Requires /dev and /sys mounted read-only for hardware probing.
-    - Uses SYS_ADMIN and SYS_RAWIO capabilities for smartctl access.
-    - NVIDIA metrics require nvidia-smi inside the container runtime.
-    - AMD/Intel metrics are read from sysfs and may vary by kernel/driver.
+    You need host /dev and /sys (read-only) so sensors and drives are visible.
+    SMART reads rely on SYS_ADMIN and SYS_RAWIO (template adds these caps).
+    NVIDIA expects nvidia-smi in the image/runtime; AMD/Intel come from sysfs and depend on your kernel/driver stack.
   </Overview>
   <Category>Tools:Utilities:Monitoring:</Category>
   <WebUI>http://[IP]:[PORT:8181]/</WebUI>

@@ -1,48 +1,13 @@
 # Contributing
 
-Thanks for contributing to HW Monitor.
+Pull requests welcome. A few pointers:
 
-## Development Setup
+**Setup:** fork, branch off `main`, copy `.env.example` → `.env`, then `docker compose up -d --build`. Logs with `docker compose logs -f`, tear down with `docker compose down`.
 
-1. Fork the repository and clone your fork.
-2. Create a feature branch from `main`.
-3. Copy `.env.example` to `.env` and set local values.
-4. Start with Docker:
+**PRs:** keep them small and scoped. If behaviour or knobs change, update `README.md`, `CHANGELOG.md` under `Unreleased`, and `.env.example`. New env vars should also touch `unraid/hw-monitor.xml` when installers need them.
 
-```bash
-docker compose up -d --build
-```
+Don’t commit real secrets—local `.env` stays untracked.
 
-Useful commands:
+**Commits:** use whatever reads clearly; conventional prefixes (`feat:`, `fix:`, `docs:`) help but aren’t mandatory.
 
-```bash
-docker compose logs -f
-docker compose down
-```
-
-## Pull Request Guidelines
-
-- Keep PRs focused and small.
-- Update `README.md` if behavior or configuration changes.
-- Update `CHANGELOG.md` under `Unreleased`.
-- Avoid committing secrets (`.env`, credentials, API keys).
-- If adding a new environment variable, update:
-  - `.env.example`
-  - `unraid/hw-monitor.xml` (if relevant)
-  - `README.md`
-
-## Commit Message Suggestions
-
-- `feat: ...` for new functionality
-- `fix: ...` for bug fixes
-- `docs: ...` for documentation
-- `refactor: ...` for internal improvements
-- `ci: ...` for workflow and automation changes
-
-## Testing Checklist
-
-- App starts successfully.
-- Login works.
-- `/healthz` returns 200.
-- Metrics API endpoints return valid JSON.
-- Docker image builds locally (`docker build .`).
+**Before merge:** app boots, login works, `/healthz` is 200, JSON APIs respond, `docker build .` succeeds.

@@ -2,63 +2,43 @@
 
 ![HW Monitor icon](assets/hw_monitor.png)
 
-A lightweight hardware monitoring dashboard for Linux and Unraid.
+Small web dashboard for watching how hard your Linux box is working: temps, voltages, disk SMART, GPU load. Built for home servers and Unraid; runs in Docker or straight on the host.
 
-## Features
+Metrics are collected in a background thread so the UI stays snappy. Short history lives in memory, longer ranges in SQLite.
 
-- Live and historical charts
-- CPU, GPU, and disk temperatures
-- CPU and GPU utilization
-- Voltage rails from `lm-sensors`
-- SMART disk telemetry from `smartctl`
-- SQLite-backed metric history
+## What it shows
 
-## Hardware Auto-Detection
+Live and historical graphs for CPU and GPU utilization, motherboard-style voltages from `lm-sensors`, disk temperatures via `smartctl`, plus SMART details when you need them.
 
-- **Disks:** `SMART_DEVICES=auto` scans physical block devices (`/dev/sdX`, `/dev/nvmeXnY`, ...).
-- **NVIDIA:** `ENABLE_NVIDIA=auto` uses `nvidia-smi` when available.
-- **AMD:** `ENABLE_AMD=auto` uses `/sys/class/drm` and hwmon.
-- **Intel:** `ENABLE_INTEL=auto` uses `/sys/class/drm` and hwmon.
-- **CPU and voltages:** read via `lm-sensors` (`sensors`).
+## Auto-detection
 
-To pin disk targets manually:
-- `SMART_DEVICES=/dev/sda,/dev/nvme0n1`
+- **Disks:** `SMART_DEVICES=auto` walks block devices (`/dev/sda`, `/dev/nvme0n1`, …).
+- **NVIDIA:** `ENABLE_NVIDIA=auto` turns on when `nvidia-smi` exists.
+- **AMD / Intel GPUs:** sysfs + hwmon when the stack exposes them (`ENABLE_AMD`, `ENABLE_INTEL`).
 
-## Quick Start (Docker Compose)
+Pinned drives look like:
 
-1. Copy the environment template:
+```bash
+SMART_DEVICES=/dev/sda,/dev/nvme0n1
+```
+
+## Docker Compose
 
 ```bash
 cp .env.example .env
 ```
 
-2. Update at least:
-- `AUTH_PASS`
-- `SECRET_KEY`
-
-3. Optionally adjust `SMART_DEVICES`.
-
-4. Start:
+Set at least `AUTH_PASS` and `SECRET_KEY`, tweak `SMART_DEVICES` if you want. Then:
 
 ```bash
 docker compose up -d --build
 ```
 
-5. Open:
-- `http://<host>:<PORT>`
+Open `http://<host>:<PORT>` (default port 8181). History goes under `./data`.
 
-Metric history is stored in `./data`.
+## Running without Docker
 
-## Local Run (No Docker)
-
-### Requirements
-- Linux
-- Python 3.11+
-- `lm-sensors` (`sensors`)
-- `smartmontools` (`smartctl`)
-- optional `nvidia-smi` for NVIDIA metrics
-
-### Install and Run
+You need Linux, Python 3.11+, `lm-sensors` and `smartmontools`. NVIDIA metrics need `nvidia-smi` on the PATH.
 
 ```bash
 python -m venv .venv
@@ -68,40 +48,33 @@ cp .env.example .env
 python server.py
 ```
 
-Then open `http://127.0.0.1:8181`.
+Then browse to `http://127.0.0.1:8181`.
 
-## Environment Variables
+## Environment
 
-Key settings are provided in `.env.example`. Most deployments only need:
-- `AUTH_PASS`
-- `SECRET_KEY`
-- `SMART_DEVICES` (`auto` or explicit list)
-- `ENABLE_NVIDIA`, `ENABLE_AMD`, `ENABLE_INTEL` (`auto|true|false`)
+See `.env.example` for everything. Most people touch `AUTH_PASS`, `SECRET_KEY`, disk list, and the `ENABLE_*` toggles (`auto`, `true`, or `false`).
 
-## Unraid Apps (Community Applications)
+## Image
 
-This repository includes:
+Prebuilt containers live on GHCR (`ghcr.io/antond645-cpu/hw-monitor`). Each git tag publishes matching semver tags; `latest` follows the newest release.
+
+## Unraid Community Applications
+
+Included templates:
+
 - `unraid/hw-monitor.xml`
 - `ca_profile.xml`
 
-### Option A: Show in your own Apps tab now (custom source)
-
-1. In Unraid, open `Apps` -> `Settings`.
-2. Add a custom source/repository using this XML URL:
+**Own Apps feed:** Apps → Settings → add a custom repository with this XML:
 
 `https://raw.githubusercontent.com/antond645-cpu/hw_monitor/main/unraid/hw-monitor.xml`
 
-3. Refresh Apps and search for `HW Monitor`.
+Refresh, search “HW Monitor”, install.
 
-### Option B: Publish into the public CA index
+**Global CA listing:** submit the repo at [ca.unraid.net/submit](https://ca.unraid.net/submit) so it appears for everyone after review.
 
-Submit this repository via:
-- [https://ca.unraid.net/submit](https://ca.unraid.net/submit)
+## Caveats
 
-After CA review and index refresh, the app becomes searchable for all users.
+Apple and Windows hosts won’t expose the same sysfs/sensor surface—this targets Linux.
 
-## Notes
-
-- On macOS/Windows, Linux-specific sensors may be unavailable.
-- In containers, SMART needs `/dev` access and capabilities (`SYS_ADMIN`, `SYS_RAWIO`).
-- AMD/Intel GPU fields depend on kernel and driver support.
+In Docker, SMART needs `/dev` (and usually `SYS_ADMIN` + `SYS_RAWIO` caps) mounted so `smartctl` can talk to drives. AMD and Intel GPU numbers depend heavily on kernel and Mesa/i915 versions.

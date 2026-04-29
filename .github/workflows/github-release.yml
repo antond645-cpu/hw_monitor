@@ -1,0 +1,38 @@
+# Create a Releases entry whenever a semver tag lands. Pulls matching text from CHANGELOG.md.
+
+name: github-release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog section for tag
+        run: |
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          ver = tag.removeprefix("v")
+          md = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          pattern = rf"(?ms)^(## \[{re.escape(ver)}\].*?)(?=^## \[|\Z)"
+          block = re.search(pattern, md)
+          if not block:
+              raise SystemExit(f"No CHANGELOG.md section matching [{ver}]")
+          Path("release-notes.md").write_text(block.group(1).strip() + "\n", encoding="utf-8")
+          PY
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
